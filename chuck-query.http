@@ -1,0 +1,5 @@
+### Get result without parameter and thus the default value
+GET http://localhost:8080/search
+
+### Get result with a parameter
+GET http://localhost:8080/search?search=Bank

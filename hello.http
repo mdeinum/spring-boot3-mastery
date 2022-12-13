@@ -1,0 +1,5 @@
+### Get without a parameter
+GET http://localhost:8080/hello
+
+### Get with a parameter
+GET http://localhost:8080/hello?name=Marten

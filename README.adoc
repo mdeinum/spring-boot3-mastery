@@ -1,0 +1,25 @@
+= What's new in Spring Boot 3 / Spring Framework 6
+
+== What's new in Spring Framework 6
+
+* Baseline on Java 17
+* Baseline on JakartaEE 9 with support for JakartaEE10
+* Observability improvements (https://micrometer.io[Micrometer])
+* Declarative HTTP Clients
+* https://www.rfc-editor.org/rfc/rfc7807[RFC-7807] (Problem Details) support
+* Basic AOT Support - Spring Native / GraalVM
+* Improved code for use with Virtual Threads (JDK19+)
+
+== What's new in Spring Boot 3
+
+* Baseline on Java 17
+* Baseline on JakartaEE 9 with support for JakartaEE10
+* Observability improvements
+* Extended AOT Support - Spring Native / GraalVM
+* Upgraded libraries (and removed support for others)
+
+== Prerequisits
+* Java 17 to run Gradle with the needed plugins
+* IDE of choice
+
+The steps for the script are xref:SCRIPT.adoc[here].

@@ -1,0 +1,2 @@
+### Get a random Chuck Norris quote
+GET http://localhost:8080/random

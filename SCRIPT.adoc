@@ -1,0 +1,261 @@
+= Spring Boot 3 Demo
+
+This is the script/how to for the Spring Boot 3 / Spring Framework 6 demo used for the ING Mastery Day on 15-12-2022.
+
+
+
+== Demo Steps
+
+=== Observability (part 1)
+
+* Add dependencies to `build.gradle`
+[source,groovy]
+----
+implementation 'org.springframework.boot:spring-boot-starter-web'
+implementation 'org.springframework.boot:spring-boot-starter-actuator'
+----
+
+* Create `HelloController` as annotation based endpoint.
+
+[source,java]
+----
+package com.ing.mastery.hello;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class HelloController {
+
+    @GetMapping("/hello")
+    public String hello(@RequestParam(defaultValue = "World") String name) {
+        return "Hello "+ name +" from Spring Boot 3!";
+    }
+}
+----
+
+* Run the application
+* execute `http :8080/hello` on the CLI (or http request)
+* execute `http :8080/hello name=="Marten"` on the CLI (or http request)
+* Add dependencies to `build.gradle` for observation/tracing and publication to Wavefront
+[source,gradle]
+----
+//	Runtime Dependencies for tracing
+runtimeOnly 'io.micrometer:micrometer-registry-wavefront'
+runtimeOnly 'io.micrometer:micrometer-tracing-bridge-brave'
+runtimeOnly 'io.micrometer:micrometer-tracing-reporter-wavefront'
+----
+* Generate API token for Wavefront using https://github.com/mhalbritter/wavefront-account-provisioner[Wavefront Account Provisioner]
+* Add configuration to `application.properties`
+[source,properties]
+----
+# Wavefront properties
+management.wavefront.api-token=<your-token>
+management.wavefront.uri=https://wavefront.surf
+management.wavefront.application.service-name=mastery-service
+management.wavefront.application.name=mastery-app
+
+#Export metrics and tracing to Wavefront
+management.wavefront.metrics.export.enabled=true
+management.tracing.sampling.probability=1.0
+----
+* Optionally add a bean for the `ObservationTextPublisher` to have a local insight (logging to console) into the metrics, tracing, logging
+
+[source,java]
+----
+@Bean
+public ObservationTextPublisher observationTextPublisher() {
+    return new ObservationTextPublisher();
+}
+----
+
+=== Declarative HTTP Clients
+
+* Add dependency on `spring-boot-starter-webflux`
+[source,gradle]
+----
+implementation 'org.springframework.boot:spring-boot-starter-webflux'
+----
+
+* Create `ChuckClient`, `Quote`, `ChuckHandler` to retrieve Chuck Norris quotes from `https://api.chucknorris.io/jokes`
+
+[source,java]
+----
+package com.ing.mastery.chuck;
+
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.service.annotation.GetExchange;
+import org.springframework.web.service.annotation.HttpExchange;
+
+@HttpExchange(url = "https://api.chucknorris.io/jokes")
+public interface ChuckClient {
+
+    @GetExchange("/random")
+    Quote random();
+
+    @GetExchange("/search")
+    SearchResults query(@RequestParam("query") String query);
+}
+----
+
+[source,java]
+.Quote Java record
+----
+package com.ing.mastery.chuck;
+
+import java.time.LocalDateTime;
+
+public record Quote(String[] categories, LocalDateTime createdAt,
+                    String iconUrl, String id, LocalDateTime updatedAt,
+                    String url, String value) { }
+----
+
+[source,java]
+.SearchResults Java record
+----
+package com.ing.mastery.chuck;
+
+import java.util.List;
+
+public record SearchResults(int total, List<Quote> result) { }
+----
+
+[source,java]
+----
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.function.ServerRequest;
+import org.springframework.web.servlet.function.ServerResponse;
+
+@Component
+public class ChuckHandler {
+
+    private final ChuckClient client;
+
+    public ChuckHandler(ChuckClient client) {
+        this.client = client;
+    }
+
+    public ServerResponse randomQuote(ServerRequest req) {
+        var quote = client.random().value();
+        return ServerResponse.ok().body(quote);
+    }
+
+    public ServerResponse searchQuote(ServerRequest req) {
+        var param = req.param("search").orElse("Finance");
+        var quotes = client.query(param).result().stream()
+                .map(Quote::value);
+        return ServerResponse.ok().body(quotes);
+    }
+}
+----
+
+* Configuration for the handler and the http client
+
+[source,java]
+.HttpService proxy configuration
+----
+@Bean
+public HttpServiceProxyFactory httpServiceProxyFactory(WebClient.Builder builder) {
+    var client = builder.build();
+    var clientAdapter = WebClientAdapter.forClient(client);
+    return HttpServiceProxyFactory.builder()
+            .blockTimeout(Duration.ofSeconds(10))
+            .clientAdapter(clientAdapter)
+            .build();
+}
+
+@Bean
+public ChuckClient chuckClient(HttpServiceProxyFactory proxyFactory) {
+    return proxyFactory.createClient(ChuckClient.class);
+}
+----
+
+[source,java]
+.Functional handler registration
+----
+@Bean
+public RouterFunction<ServerResponse> routes(ChuckHandler chuckHandler) {
+    return RouterFunctions.route()
+            .GET("/random", chuckHandler::randomQuote)
+            .GET("/search", chuckHandler::searchQuote)
+            .build();
+}
+----
+
+* Restart application
+* execute `http :8080/random` on the CLI (or http request)
+* execute `http :8080/search` on the CLI (or http request)
+* execute `http :8080/search search==Bank` on the CLI (or http request)
+
+=== Observability (part 2)
+* Show https://wavefront.surf/us/6CPSz2mdQh[dashboard] and show tracing view that it includes the declaritive HTTP client
+
+* Optional: Modify `ChuckHandler` add with an additional observation
+
+[source,java]
+----
+public ServerResponse randomQuote(ServerRequest req) {
+    var quote = client.random().value();
+    return Observation
+            .createNotStarted("prepare-response", registry)
+            .lowCardinalityKeyValue("request", "random")
+            .observe( () -> ServerResponse.ok().body(quote));
+}
+----
+
+* Restart application
+* execute `http :8080/random` on the CLI (or http request) a couple of times
+* Go back to the https://wavefront.surf/us/6CPSz2mdQh[dashboard] and show tracing view that it includes additional tracing (and the traceId/spanId propagation).
+
+=== Problem Details (RFC-7807)
+
+* Enable in `application.properties` by setting `spring.mvc.problemdetails.enabled` to `true`.
+
+[source,properties]
+----
+spring.mvc.problemdetails.enabled=true
+----
+
+* Add exception handler to extend information.
+
+[source,java]
+----
+package com.ing.mastery;
+
+import java.net.URI;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+@ControllerAdvice
+public class MasteryExceptionHandler extends ResponseEntityExceptionHandler {
+
+    @Override
+    protected ResponseEntity<Object> handleMissingServletRequestParameter(MissingServletRequestParameterException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        ex.getBody().setType(URI.create("https://errors.ing.com/missing-parameter"));
+        return super.handleMissingServletRequestParameter(ex, headers, status, request);
+    }
+}
+----
+
+* Restart application
+
+=== Spring Boot and AOT
+* Add Native Compiler plugin
+[source,gradle]
+----
+id 'org.graalvm.buildtools.native' version '0.9.19'
+----
+
+* Run `./gradlew build` on CLI
+* Show `build/generated/aotSources`
+* Run `./gradlew nativeCompile` on CLI
+* Wait ...
+* **Stop Application Running In IntelliJ**
+* Run `build/native/nativeCompile/spring-boot3-mastery`
+* Optionally: Run `build/native/nativeCompile/spring-boot3-mastery --logging.level.root=WARN`
